@@ -25,6 +25,9 @@ import baritone.api.event.listener.IEventBus;
 import baritone.api.process.IBaritoneProcess;
 import baritone.api.process.IElytraProcess;
 import baritone.api.utils.IPlayerContext;
+import baritone.awareness.AwarenessContext;
+import baritone.awareness.behavior.AwarenessBehavior;
+import baritone.awareness.process.CombatProcess;
 import baritone.behavior.*;
 import baritone.cache.WorldProvider;
 import baritone.command.manager.CommandManager;
@@ -32,6 +35,7 @@ import baritone.event.GameEventHandler;
 import baritone.process.*;
 import baritone.selection.SelectionManager;
 import baritone.utils.BlockStateInterface;
+import baritone.utils.CustomConfig;
 import baritone.utils.GuiClick;
 import baritone.utils.InputOverrideHandler;
 import baritone.utils.PathingControlManager;
@@ -66,10 +70,16 @@ public class Baritone implements IBaritone {
 
     private final GameEventHandler gameEventHandler;
 
+    // Field initializer: ready before any constructor body runs, so getAwarenessContext()
+    // is safe to call from within AwarenessBehavior and CombatProcess constructors.
+    private final AwarenessContext awarenessContext = new AwarenessContext();
+
+    private final AwarenessBehavior awarenessBehavior;
     private final PathingBehavior pathingBehavior;
     private final LookBehavior lookBehavior;
     private final InventoryBehavior inventoryBehavior;
     private final InputOverrideHandler inputOverrideHandler;
+    private final HUDBehavior hudBehavior;
 
     private final FollowProcess followProcess;
     private final MineProcess mineProcess;
@@ -80,6 +90,8 @@ public class Baritone implements IBaritone {
     private final FarmProcess farmProcess;
     private final InventoryPauserProcess inventoryPauserProcess;
     private final IElytraProcess elytraProcess;
+    private final FollowPlayerProcess followPlayerProcess;
+    private final CombatProcess combatProcess;
 
     private final PathingControlManager pathingControlManager;
     private final SelectionManager selectionManager;
@@ -94,6 +106,9 @@ public class Baritone implements IBaritone {
         this.mc = mc;
         this.gameEventHandler = new GameEventHandler(this);
 
+        // Load custom config (keybinds, HUD prefs) before anything else uses it.
+        CustomConfig.load();
+
         this.directory = mc.gameDirectory.toPath().resolve("baritone");
         if (!Files.exists(this.directory)) {
             try {
@@ -105,11 +120,15 @@ public class Baritone implements IBaritone {
         this.playerContext = new BaritonePlayerContext(this, mc);
 
         {
+            // AwarenessBehavior must be registered first so sensor data is populated
+            // before PathingControlManager dispatches to any process on the same tick.
+            this.awarenessBehavior    = this.registerBehavior(AwarenessBehavior::new);
             this.lookBehavior         = this.registerBehavior(LookBehavior::new);
             this.pathingBehavior      = this.registerBehavior(PathingBehavior::new);
             this.inventoryBehavior    = this.registerBehavior(InventoryBehavior::new);
             this.inputOverrideHandler = this.registerBehavior(InputOverrideHandler::new);
             this.registerBehavior(WaypointBehavior::new);
+            this.hudBehavior          = this.registerBehavior(HUDBehavior::new);
         }
 
         this.pathingControlManager = new PathingControlManager(this);
@@ -124,6 +143,8 @@ public class Baritone implements IBaritone {
             this.inventoryPauserProcess  = this.registerProcess(InventoryPauserProcess::new);
             this.elytraProcess           = this.registerProcess(ElytraProcess::create);
             this.registerProcess(BackfillProcess::new);
+            this.followPlayerProcess     = this.registerProcess(FollowPlayerProcess::new);
+            this.combatProcess           = this.registerProcess(CombatProcess::new);
         }
 
         this.worldProvider = new WorldProvider(this);
@@ -238,6 +259,26 @@ public class Baritone implements IBaritone {
     @Override
     public IElytraProcess getElytraProcess() {
         return this.elytraProcess;
+    }
+
+    /** Returns the HUD overlay / hotkey behavior added by the fork. */
+    public HUDBehavior getHudBehavior() {
+        return this.hudBehavior;
+    }
+
+    /** Returns the player-follow process that uses {@link baritone.api.pathing.goals.GoalFollow}. */
+    public FollowPlayerProcess getFollowPlayerProcess() {
+        return this.followPlayerProcess;
+    }
+
+    /** Returns the shared awareness context updated every tick by {@link AwarenessBehavior}. */
+    public AwarenessContext getAwarenessContext() {
+        return this.awarenessContext;
+    }
+
+    /** Returns the combat process that translates awareness decisions into Baritone goals. */
+    public CombatProcess getCombatProcess() {
+        return this.combatProcess;
     }
 
     @Override
