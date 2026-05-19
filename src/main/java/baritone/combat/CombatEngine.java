@@ -28,6 +28,7 @@ import net.minecraft.world.phys.Vec3;
  *   6. TargetSelector — pick best living target.
  *   6a. Universally dangerous target (Warden, Wither, etc.) → GoalRunAway(20).
  *   6b. Creeper target → pause; CreepeTactics handles the fuse.
+ *   6c. ElytraComboController — dive-bomb and wind-charge combos (no-op on 1.19.4).
  *   7a. Target > 4.5 m → pathing zone:
  *       PotionController.tickSelfBuff — drink Strength/Speed if not already buffed.
  *       RangedController.tick — bow/crossbow if in 5–16 m band with line of sight.
@@ -35,7 +36,7 @@ import net.minecraft.world.phys.Vec3;
  *       Baritone GoalNear(3) to close gap.
  *   7b. Target ≤ 4.5 m → direct input control:
  *       PotionController.tickSplash — throw Harm/Slow/Weakness/Poison if available.
- *       WeaponSelector sets hotbar slot (DPS-based, or axe when enemy blocks).
+ *       WeaponSelector sets hotbar slot (DPS-based; mace preserved when ElytraCombo active).
  *       ShieldController.tickDefense raises shield on incoming mace dive.
  *       SpacingController drives W/A/D/sprint/W-tap (adaptive strafe).
  *       AttackValidator fires attack only on falling arc (crit).
@@ -54,16 +55,17 @@ public final class CombatEngine {
     private final IPlayerContext ctx;
     private final AwarenessContext awarenessCtx;
 
-    private final TargetSelector    targetSelector;
-    private final SpacingController spacingController;
-    private final AttackValidator   attackValidator;
-    private final CreepeTactics     creepeTactics;
-    private final HealthGate        healthGate;
-    private final WeaponSelector    weaponSelector;
-    private final ShieldController  shieldController;
-    private final PearlController   pearlController;
-    private final RangedController  rangedController;
-    private final PotionController  potionController;
+    private final TargetSelector        targetSelector;
+    private final SpacingController     spacingController;
+    private final AttackValidator       attackValidator;
+    private final CreepeTactics         creepeTactics;
+    private final HealthGate            healthGate;
+    private final WeaponSelector        weaponSelector;
+    private final ShieldController      shieldController;
+    private final PearlController       pearlController;
+    private final RangedController      rangedController;
+    private final PotionController      potionController;
+    private final ElytraComboController elytraCombo;
 
     // Stuck-detection: cancel stale GoalNear paths that aren't closing the gap
     private float lastKnownDist      = -1;
@@ -85,6 +87,7 @@ public final class CombatEngine {
         pearlController   = new PearlController(ctx);
         rangedController  = new RangedController(ctx);
         potionController  = new PotionController(ctx);
+        elytraCombo       = new ElytraComboController(ctx);
     }
 
     public PathingCommand tick() {
@@ -132,9 +135,16 @@ public final class CombatEngine {
             return pause();
         }
 
+        // 6c. Elytra dive-bomb and wind-charge combos (no-op on 1.19.4)
+        PathingCommand elytraCmd = elytraCombo.tick(input, target);
+        if (elytraCmd != null) return elytraCmd;
+
         boolean inDirectControl = distance <= ENGAGE_DISTANCE;
 
         if (!inDirectControl) {
+            // Don't redirect with GoalNear while in a dive — let momentum carry through
+            if (elytraCombo.isActive()) return pause();
+
             // Stuck detection — only count ticks when NOT actively shooting
             if (!rangedController.isDrawing()) {
                 if (lastKnownDist > 0 && distance > lastKnownDist - STUCK_MIN_CLOSE) {
@@ -187,7 +197,14 @@ public final class CombatEngine {
             return pause();
         }
 
-        int desiredSlot = weaponSelector.select(player, awarenessCtx);
+        // Preserve mace slot when elytra combo is active (DIVE_ATTACK or RECOVERING phases)
+        int desiredSlot;
+        if (elytraCombo.isActive()) {
+            int ms = ElytraComboController.findMaceSlot(player);
+            desiredSlot = ms >= 0 ? ms : weaponSelector.select(player, awarenessCtx);
+        } else {
+            desiredSlot = weaponSelector.select(player, awarenessCtx);
+        }
         player.getInventory().selected = desiredSlot;
 
         shieldController.tickDefense(target, input);
