@@ -2,6 +2,7 @@ package baritone.combat;
 
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.AxeItem;
+import net.minecraft.world.item.CrossbowItem;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.SwordItem;
@@ -14,7 +15,7 @@ import net.minecraft.world.item.SwordItem;
  *   [1] Axe         shield breaker
  *   [2] Ender Pearl mobility / escape
  *   [3] Gapple      emergency heal
- *   [4] Potion      quick heal
+ *   [4] Potion      quick heal / buff
  *   [5] Food        saturation
  *   [6] Blocks      utility
  *   [7] Bow         ranged
@@ -76,9 +77,26 @@ public final class InventoryLayout {
         return -1;
     }
 
-    public static boolean isSword(ItemStack s)  { return !s.isEmpty() && s.getItem() instanceof SwordItem; }
-    public static boolean isAxe(ItemStack s)    { return !s.isEmpty() && s.getItem() instanceof AxeItem; }
-    public static boolean isPearl(ItemStack s)  { return !s.isEmpty() && s.getItem() == Items.ENDER_PEARL; }
+    public static int findBowSlot(Player player) {
+        if (isBow(player.getInventory().getItem(SLOT_BOW))) return SLOT_BOW;
+        for (int i = 0; i < 9; i++) {
+            if (isBow(player.getInventory().getItem(i))) return i;
+        }
+        return -1;
+    }
+
+    public static int findCrossbowSlot(Player player) {
+        for (int i = 0; i < 9; i++) {
+            if (isCrossbow(player.getInventory().getItem(i))) return i;
+        }
+        return -1;
+    }
+
+    public static boolean isSword(ItemStack s)    { return !s.isEmpty() && s.getItem() instanceof SwordItem; }
+    public static boolean isAxe(ItemStack s)      { return !s.isEmpty() && s.getItem() instanceof AxeItem; }
+    public static boolean isBow(ItemStack s)      { return !s.isEmpty() && s.getItem() == Items.BOW; }
+    public static boolean isCrossbow(ItemStack s) { return !s.isEmpty() && s.getItem() instanceof CrossbowItem; }
+    public static boolean isPearl(ItemStack s)    { return !s.isEmpty() && s.getItem() == Items.ENDER_PEARL; }
     public static boolean isGapple(ItemStack s) {
         return !s.isEmpty() && (s.getItem() == Items.ENCHANTED_GOLDEN_APPLE
                              || s.getItem() == Items.GOLDEN_APPLE);

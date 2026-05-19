@@ -28,9 +28,13 @@ import net.minecraft.world.phys.Vec3;
  *   6. TargetSelector — pick best living target.
  *   6a. Universally dangerous target (Warden, Wither, etc.) → GoalRunAway(20).
  *   6b. Creeper target → pause; CreepeTactics handles the fuse.
- *   7a. Target > 4.5 m → Baritone GoalNear(3) to close gap.
+ *   7a. Target > 4.5 m → pathing zone:
+ *       PotionController.tickSelfBuff — drink Strength/Speed if not already buffed.
+ *       RangedController.tick — bow/crossbow if in 5–16 m band with line of sight.
  *       Stuck detection: cancel path after 40 ticks without closing 0.2 m/tick.
+ *       Baritone GoalNear(3) to close gap.
  *   7b. Target ≤ 4.5 m → direct input control:
+ *       PotionController.tickSplash — throw Harm/Slow/Weakness/Poison if available.
  *       WeaponSelector sets hotbar slot (DPS-based, or axe when enemy blocks).
  *       ShieldController.tickDefense raises shield on incoming mace dive.
  *       SpacingController drives W/A/D/sprint/W-tap (adaptive strafe).
@@ -58,6 +62,8 @@ public final class CombatEngine {
     private final WeaponSelector    weaponSelector;
     private final ShieldController  shieldController;
     private final PearlController   pearlController;
+    private final RangedController  rangedController;
+    private final PotionController  potionController;
 
     // Stuck-detection: cancel stale GoalNear paths that aren't closing the gap
     private float lastKnownDist      = -1;
@@ -77,6 +83,8 @@ public final class CombatEngine {
         weaponSelector    = new WeaponSelector();
         shieldController  = new ShieldController(ctx);
         pearlController   = new PearlController(ctx);
+        rangedController  = new RangedController(ctx);
+        potionController  = new PotionController(ctx);
     }
 
     public PathingCommand tick() {
@@ -127,29 +135,44 @@ public final class CombatEngine {
         boolean inDirectControl = distance <= ENGAGE_DISTANCE;
 
         if (!inDirectControl) {
-            // Stuck detection: if the path isn't closing the gap, cancel it so Baritone
-            // replans or we fall through to direct-input mode next tick.
-            if (lastKnownDist > 0 && distance > lastKnownDist - STUCK_MIN_CLOSE) {
-                closingStuckTicks++;
-                if (closingStuckTicks > STUCK_TICKS) {
-                    baritone.getPathingBehavior().secretInternalSegmentCancel();
+            // Stuck detection — only count ticks when NOT actively shooting
+            if (!rangedController.isDrawing()) {
+                if (lastKnownDist > 0 && distance > lastKnownDist - STUCK_MIN_CLOSE) {
+                    closingStuckTicks++;
+                    if (closingStuckTicks > STUCK_TICKS) {
+                        baritone.getPathingBehavior().secretInternalSegmentCancel();
+                        closingStuckTicks = 0;
+                    }
+                } else {
                     closingStuckTicks = 0;
                 }
-            } else {
-                closingStuckTicks = 0;
+                lastKnownDist = distance;
             }
-            lastKnownDist      = distance;
             wasInDirectControl = false;
+
+            // Drink Strength/Speed while chasing (slot managed internally during the hold)
+            if (potionController.tickSelfBuff(input, player)) {
+                // Keep pathing while drinking — just don't try to shoot simultaneously
+                return new PathingCommand(
+                    new GoalNear(target.tracked.entity.blockPosition(), 3),
+                    PathingCommandType.REVALIDATE_GOAL_AND_PATH);
+            }
+
+            // Ranged attack when in the bow/crossbow band with line of sight
+            if (rangedController.tick(input, target)) {
+                return pause(); // hold position while drawing / firing
+            }
 
             return new PathingCommand(
                 new GoalNear(target.tracked.entity.blockPosition(), 3),
                 PathingCommandType.REVALIDATE_GOAL_AND_PATH);
         }
 
-        // Entering direct-input range for the first time — reset stale jump state
-        // so the attack validator doesn't fire a leftover jump immediately.
+        // Entering direct-input range — reset stale state from the chase phase
         if (!wasInDirectControl) {
             attackValidator.reset();
+            rangedController.reset();
+            potionController.cancelDrink();
             lastKnownDist     = -1;
             closingStuckTicks = 0;
         }
@@ -157,6 +180,12 @@ public final class CombatEngine {
 
         // 7. Direct input control at close range
         aimAt(target.tracked.entity);
+
+        // Throw a splash potion if one is available and the cooldown allows.
+        // This overrides the weapon slot and aim for one tick, then normal melee resumes.
+        if (potionController.tickSplash(input, target, player)) {
+            return pause();
+        }
 
         int desiredSlot = weaponSelector.select(player, awarenessCtx);
         player.getInventory().selected = desiredSlot;
