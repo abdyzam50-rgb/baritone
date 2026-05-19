@@ -36,6 +36,7 @@ import net.minecraft.world.phys.Vec3;
  *       Baritone GoalNear(3) to close gap.
  *   7b. Target ≤ 4.5 m → direct input control:
  *       PotionController.tickSplash — throw Harm/Slow/Weakness/Poison if available.
+ *       StunSlamController — axe stun + mace follow-up when target is blocking.
  *       WeaponSelector sets hotbar slot (DPS-based; mace preserved when ElytraCombo active).
  *       ShieldController.tickDefense raises shield on incoming mace dive.
  *       SpacingController drives W/A/D/sprint/W-tap (adaptive strafe).
@@ -66,6 +67,7 @@ public final class CombatEngine {
     private final RangedController      rangedController;
     private final PotionController      potionController;
     private final ElytraComboController elytraCombo;
+    private final StunSlamController    stunSlam;
 
     // Stuck-detection: cancel stale GoalNear paths that aren't closing the gap
     private float lastKnownDist      = -1;
@@ -88,6 +90,7 @@ public final class CombatEngine {
         rangedController  = new RangedController(ctx);
         potionController  = new PotionController(ctx);
         elytraCombo       = new ElytraComboController(ctx);
+        stunSlam          = new StunSlamController(ctx);
     }
 
     public PathingCommand tick() {
@@ -183,6 +186,7 @@ public final class CombatEngine {
             attackValidator.reset();
             rangedController.reset();
             potionController.cancelDrink();
+            stunSlam.reset();
             lastKnownDist     = -1;
             closingStuckTicks = 0;
         }
@@ -197,18 +201,22 @@ public final class CombatEngine {
             return pause();
         }
 
-        // Preserve mace slot when elytra combo is active (DIVE_ATTACK or RECOVERING phases)
-        int desiredSlot;
-        if (elytraCombo.isActive()) {
-            int ms = ElytraComboController.findMaceSlot(player);
-            desiredSlot = ms >= 0 ? ms : weaponSelector.select(player, awarenessCtx);
-        } else {
-            desiredSlot = weaponSelector.select(player, awarenessCtx);
+        // Stun slam: fires axe stun → mace follow-up when target is blocking (1.21+ only).
+        // Returns true when it fires an attack, suppressing normal weapon/attack flow.
+        boolean stunFired = stunSlam.tick(target, player);
+        if (!stunFired) {
+            // Preserve mace slot when elytra combo is active (DIVE_ATTACK or RECOVERING)
+            int desiredSlot;
+            if (elytraCombo.isActive()) {
+                int ms = ElytraComboController.findMaceSlot(player);
+                desiredSlot = ms >= 0 ? ms : weaponSelector.select(player, awarenessCtx);
+            } else {
+                desiredSlot = weaponSelector.select(player, awarenessCtx);
+            }
+            player.getInventory().selected = desiredSlot;
+            shieldController.tickDefense(target, input);
+            attackValidator.tick(input, target);
         }
-        player.getInventory().selected = desiredSlot;
-
-        shieldController.tickDefense(target, input);
-        attackValidator.tick(input, target);
         spacingController.tick(input, target, awarenessCtx);
 
         return pause();

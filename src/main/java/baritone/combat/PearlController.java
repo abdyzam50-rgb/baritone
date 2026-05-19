@@ -43,10 +43,13 @@ public final class PearlController {
     private static final int   THROW_COOLDOWN    = 20;
     private static final int   SURROUND_COUNT    = 3;
     private static final float SURROUND_RADIUS   = 5f;
+    /** Ticks after throwing the pearl before firing the wind-charge catch boost. */
+    private static final int   PEARL_CATCH_DELAY = 8;
 
     private final IPlayerContext ctx;
-    private int     cooldown  = 0;
-    private boolean threw     = false;
+    private int     cooldown         = 0;
+    private boolean threw            = false;
+    private int     catchTimer       = 0;   // >0 means a catch boost is pending
 
     public PearlController(IPlayerContext ctx) {
         this.ctx = ctx;
@@ -56,6 +59,27 @@ public final class PearlController {
                      boolean ownShieldBroken) {
         if (cooldown > 0) cooldown--;
         threw = false;
+
+        // Pearl-catch wind-charge boost: fires N ticks after the pearl throw so the
+        // player arrives at the pearl destination already airborne for a mace dive.
+        if (catchTimer > 0) {
+            catchTimer--;
+            if (catchTimer == 0) {
+                Player catcher = ctx.player();
+                if (catcher != null) {
+                    int wcSlot = ElytraComboController.findWindChargeSlot(catcher);
+                    if (wcSlot >= 0) {
+                        catcher.setXRot(89f); catcher.xRotO = 89f;  // aim straight down
+                        catcher.getInventory().selected = wcSlot;
+                        input.setInputForceState(Input.CLICK_RIGHT, true);
+                        // Pre-select mace so ElytraComboController takes over next tick
+                        int maceSlot = ElytraComboController.findMaceSlot(catcher, true);
+                        if (maceSlot >= 0) catcher.getInventory().selected = maceSlot;
+                    }
+                }
+            }
+            return; // hold normal combat logic while catch is pending
+        }
 
         SelfState self = awarenessCtx.getSelf();
         if (!self.hasPearl || self.health < MIN_HP_TO_THROW || cooldown > 0) return;
@@ -91,12 +115,20 @@ public final class PearlController {
 
         cooldown = THROW_COOLDOWN;
         threw    = true;
+
+        // Queue a wind-charge boost if we have both wind charges and a mace — this lets
+        // ElytraComboController handle a mace dive at the pearl destination.
+        if (ElytraComboController.WIND_CHARGE_ITEM != null
+                && ElytraComboController.findWindChargeSlot(player) >= 0
+                && ElytraComboController.findMaceSlot(player, true) >= 0) {
+            catchTimer = PEARL_CATCH_DELAY;
+        }
     }
 
     /** True on the exact tick a pearl was thrown. */
     public boolean justThrew() { return threw; }
 
-    // ── helpers ─────────────────────────────────────────────────────────────────────
+    // ── helpers ──────────────────────────────────────────────────────────────────────────
 
     private Vec3 computeEscapeDir(AwarenessContext ctx, Player player) {
         List<ThreatEntry> threats = ctx.getThreats();

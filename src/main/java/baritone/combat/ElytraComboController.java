@@ -204,12 +204,47 @@ public final class ElytraComboController {
 
     // ── static helpers ────────────────────────────────────────────────────────────────
 
-    public static int findMaceSlot(Player player) {
+    /**
+     * Find the best mace slot, preferring the enchant that suits the combat context.
+     *
+     * @param preferDensity true  = prefer Density (fall-damage bonus, best for aerial dive).
+     *                      false = prefer Breach  (armour ignore, best for grounded stun slam).
+     *
+     * Enchant detection uses NBT string matching so it compiles on 1.19.4 and still
+     * works on 1.21 as long as item tags are present (gracefully falls back to any mace).
+     */
+    public static int findMaceSlot(Player player, boolean preferDensity) {
         if (MACE_ITEM == null) return -1;
+        String want     = preferDensity ? "density" : "breach";
+        String fallback = preferDensity ? "breach"  : "density";
+        int wantSlot = -1, fallbackSlot = -1, anyMace = -1;
         for (int i = 0; i < 9; i++) {
-            if (player.getInventory().getItem(i).getItem() == MACE_ITEM) return i;
+            ItemStack s = player.getInventory().getItem(i);
+            if (s.getItem() != MACE_ITEM) continue;
+            if (wantSlot     < 0 && hasEnchantByName(s, want))     { wantSlot     = i; continue; }
+            if (fallbackSlot < 0 && hasEnchantByName(s, fallback)) { fallbackSlot = i; continue; }
+            if (anyMace      < 0)                                   { anyMace      = i; }
         }
-        return -1;
+        if (wantSlot     >= 0) return wantSlot;
+        if (fallbackSlot >= 0) return fallbackSlot;
+        return anyMace;
+    }
+
+    /** Finds any mace slot (prefers Density for aerial use). */
+    public static int findMaceSlot(Player player) {
+        return findMaceSlot(player, true);
+    }
+
+    /**
+     * Checks for a named enchantment via item NBT tag string.
+     * Works on 1.19.4 (legacy enchantment tag) and degrades gracefully on 1.21+.
+     */
+    private static boolean hasEnchantByName(ItemStack stack, String name) {
+        try {
+            net.minecraft.nbt.CompoundTag tag = stack.getTag();
+            if (tag != null) return tag.toString().contains(name);
+        } catch (Exception ignored) {}
+        return false;
     }
 
     public static int findWindChargeSlot(Player player) {
