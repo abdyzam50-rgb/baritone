@@ -23,14 +23,13 @@ import net.minecraft.world.phys.Vec3;
  *   2. ShieldController.manageOffHand — totem/shield swap based on HP.
  *   3. PearlController — escape throw when surrounded or shield broken + low HP.
  *   4. HealthGate — disengage and heal when HP < 50%.
- *   5. CreepeTactics — fusing creeper override.
- *   6. TargetSelector — pick best living target.
+ *   5. CreepeTactics — fusing creeper override (sprints away immediately).
+ *   6. TargetSelector — pick best living non-creeper target.
  *   7a. Target > 4.5 m → Baritone GoalNear(3) to close gap.
  *   7b. Target ≤ 4.5 m → direct input control:
  *       WeaponSelector sets hotbar slot (sword or axe).
  *       SpacingController drives W/A/D/sprint/W-tap.
- *       AttackValidator fires CLICK_LEFT only on legit hits (cooldown,
- *       range, LOS, falling-for-crit).
+ *       AttackValidator fires attack only on falling arc (crit).
  *       Player rotation set directly toward target each tick.
  */
 public final class CombatEngine {
@@ -86,27 +85,20 @@ public final class CombatEngine {
             return healthGate.tick(input, awarenessCtx);
         }
 
-        // 4. Creeper override
+        // 4. Creeper override — sprints away immediately when any creeper is fusing.
+        //    Returns non-null to take full control of this tick.
         PathingCommand creeperCmd = creepeTactics.tick(input, awarenessCtx);
         if (creeperCmd != null) return creeperCmd;
 
-        // 5. Target selection
+        // 5. Target selection (creepers are lowest priority and only selected solo)
         ThreatEntry target = targetSelector.select(awarenessCtx);
         if (target == null || !target.tracked.entity.isAlive()) return pause();
 
         float distance = (float) target.tracked.distance;
 
-        // Creepers: never melee — walk to within 3 blocks to trigger the fuse, then step
-        // back and let CreepeTactics handle the hit window and escape.  Direct combat
-        // would crit-spam them at close range → instant death from own explosion.
+        // Creepers: do not approach. CreepeTactics will handle the fuse when it starts;
+        // the creeper will chase the player naturally until then.
         if (target.tracked.entity instanceof Creeper) {
-            if (distance > 3.5f) {
-                return new PathingCommand(
-                    new GoalNear(target.tracked.entity.blockPosition(), 3),
-                    PathingCommandType.REVALIDATE_GOAL_AND_PATH);
-            }
-            // Within explosion range — CreepeTactics handles fuse window above.
-            // If the creeper isn't fusing yet, stand still and wait.
             return pause();
         }
 
@@ -119,7 +111,6 @@ public final class CombatEngine {
         // 6. Direct input control at close range
         aimAt(target.tracked.entity);
 
-        // Weapon selection (sword vs axe for shield breaking)
         int desiredSlot = weaponSelector.select(player, awarenessCtx);
         player.getInventory().selected = desiredSlot;
 

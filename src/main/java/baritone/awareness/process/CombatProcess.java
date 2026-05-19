@@ -11,7 +11,7 @@ import baritone.utils.BaritoneProcessHelper;
 import java.util.List;
 
 /**
- * Activates when overall danger exceeds the AwarenessContext threshold (0.3).
+ * Activates when there are living threats within 20 blocks.
  * All combat logic is delegated to CombatEngine.
  */
 public final class CombatProcess extends BaritoneProcessHelper {
@@ -32,7 +32,7 @@ public final class CombatProcess extends BaritoneProcessHelper {
         List<ThreatEntry> threats = awarenessCtx.getThreats();
         if (threats.isEmpty()) return false;
         ThreatEntry primary = threats.get(0);
-        return primary.tracked.distance < 20 || awarenessCtx.getOverallDangerLevel() > 0.15f;
+        return primary.tracked.distance < 20;
     }
 
     @Override
@@ -42,8 +42,11 @@ public final class CombatProcess extends BaritoneProcessHelper {
 
     @Override
     public void onLostControl() {
-        // Clear all forced inputs so no movement key stays held after combat ends
+        // Clear all forced inputs so no movement key stays held after combat ends.
         baritone.getInputOverrideHandler().clearAllKeys();
+        // Cancel the active path segment (e.g. a GoalNear chase) so the bot does not
+        // keep running toward a dead enemy until the next battle triggers resetInputs.
+        baritone.getPathingBehavior().secretInternalSegmentCancel();
     }
 
     @Override
