@@ -69,7 +69,7 @@ public final class PotionController {
         this.ctx = ctx;
     }
 
-    // ── self-buff drinking ───────────────────────────────────────────────────────────────────
+    // ── self-buff drinking ───────────────────────────────────────────────────────────
 
     /**
      * Manages self-buff potions while the bot is still pathing toward the target.
@@ -123,7 +123,7 @@ public final class PotionController {
         return drinkSlot >= 0;
     }
 
-    // ── offensive splash throwing ────────────────────────────────────────────────────────────
+    // ── offensive splash throwing ────────────────────────────────────────────────────
 
     /**
      * Attempts to throw an offensive splash potion at the target.
@@ -151,7 +151,7 @@ public final class PotionController {
         return true;
     }
 
-    // ── splash selection logic ───────────────────────────────────────────────────────────
+    // ── splash selection logic ───────────────────────────────────────────────────────
 
     /**
      * Returns the hotbar slot of the best splash potion to throw given the target's
@@ -181,7 +181,7 @@ public final class PotionController {
         return -1;
     }
 
-    // ── hotbar scan helpers ────────────────────────────────────────────────────────────────
+    // ── hotbar scan helpers ──────────────────────────────────────────────────────────
 
     private static int findSplash(Player player, MobEffect effect) {
         for (int i = 0; i < 9; i++) {

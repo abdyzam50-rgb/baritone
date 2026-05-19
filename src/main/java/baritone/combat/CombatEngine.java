@@ -202,7 +202,7 @@ public final class CombatEngine {
         return creepeTactics.hasPendingEscape();
     }
 
-    // ── helpers ──────────────────────────────────────────────────────────────────────────
+    // ── helpers ──────────────────────────────────────────────────────────────────────
 
     private void aimAt(Entity target) {
         Vec3  eye   = ctx.player().getEyePosition(1f);
