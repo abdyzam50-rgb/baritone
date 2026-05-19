@@ -1,14 +1,17 @@
 package baritone.combat;
 
+import baritone.api.utils.IPlayerContext;
 import baritone.awareness.AwarenessContext;
 import baritone.awareness.model.ThreatEntry;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.monster.Creeper;
 import net.minecraft.world.entity.monster.Illusioner;
 import net.minecraft.world.entity.monster.Pillager;
 import net.minecraft.world.entity.monster.Skeleton;
 import net.minecraft.world.entity.monster.Stray;
 import net.minecraft.world.entity.monster.Witch;
+import net.minecraft.world.entity.player.Player;
 
 import java.util.List;
 
@@ -21,22 +24,53 @@ import java.util.List;
  *   - Only switch when the locked target dies, flees, or de-spawns.
  *
  * Priority on fresh selection:
- *   1. Ranged threats (Skeleton, Stray, Witch, Pillager, Illusioner)
+ *   1. Revenge target (mob that last hurt us, within 5 seconds).
+ *   2. Ranged threats (Skeleton, Stray, Witch, Pillager, Illusioner)
  *      — killed first because they deal damage while kiting.
- *   2. Highest-scored alive non-creeper.
- *   3. Creeper (solo only — CombatEngine will just wait for CreepeTactics).
+ *   3. Highest-scored alive non-creeper.
+ *   4. Creeper (solo only — CombatEngine will just wait for CreepeTactics).
  */
 public final class TargetSelector {
 
     private static final double LOCK_MAX_DISTANCE = 24.0;
+    /** Ticks after being hit during which the attacker is top-priority (~5 seconds). */
+    private static final int REVENGE_TICKS = 100;
 
-    private Entity lockedTarget = null;
+    private final IPlayerContext ctx;
+    private Entity        lockedTarget     = null;
+    // Revenge tracking — we detect the change ourselves to avoid relying on
+    // LivingEntity.getLastHurtByMobTimestamp() which is package-private on some mappings.
+    private LivingEntity  lastSeenAttacker = null;
+    private int           attackerSeenAt   = 0;
 
-    public ThreatEntry select(AwarenessContext ctx) {
-        List<ThreatEntry> threats = ctx.getThreats();
+    public TargetSelector(IPlayerContext ctx) {
+        this.ctx = ctx;
+    }
+
+    public ThreatEntry select(AwarenessContext awarenessCtx) {
+        List<ThreatEntry> threats = awarenessCtx.getThreats();
         if (threats.isEmpty()) {
             lockedTarget = null;
             return null;
+        }
+
+        // Revenge: the mob that last hurt us jumps to the front of the queue.
+        Player player = ctx.player();
+        if (player != null) {
+            LivingEntity currentAttacker = player.getLastHurtByMob();
+            if (currentAttacker != lastSeenAttacker) {
+                lastSeenAttacker = currentAttacker;
+                attackerSeenAt   = player.tickCount;
+            }
+            if (lastSeenAttacker != null && lastSeenAttacker.isAlive()
+                    && (player.tickCount - attackerSeenAt) < REVENGE_TICKS) {
+                for (ThreatEntry t : threats) {
+                    if (t.tracked.entity == lastSeenAttacker) {
+                        lockedTarget = lastSeenAttacker;
+                        return t;
+                    }
+                }
+            }
         }
 
         // Maintain lock while target is alive and close

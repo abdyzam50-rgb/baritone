@@ -29,9 +29,11 @@ import net.minecraft.world.phys.Vec3;
  *   6a. Universally dangerous target (Warden, Wither, etc.) → GoalRunAway(20).
  *   6b. Creeper target → pause; CreepeTactics handles the fuse.
  *   7a. Target > 4.5 m → Baritone GoalNear(3) to close gap.
+ *       Stuck detection: cancel path after 40 ticks without closing 0.2 m/tick.
  *   7b. Target ≤ 4.5 m → direct input control:
- *       WeaponSelector sets hotbar slot (sword or axe).
- *       SpacingController drives W/A/D/sprint/W-tap.
+ *       WeaponSelector sets hotbar slot (DPS-based, or axe when enemy blocks).
+ *       ShieldController.tickDefense raises shield on incoming mace dive.
+ *       SpacingController drives W/A/D/sprint/W-tap (adaptive strafe).
  *       AttackValidator fires attack only on falling arc (crit).
  *       Player rotation set directly toward target each tick.
  */
@@ -39,6 +41,10 @@ public final class CombatEngine {
 
     private static final float  ENGAGE_DISTANCE  = 4.5f;
     private static final double FLEE_DISTANCE    = 20.0;
+    /** Ticks without closing distance before we cancel the stale path and try direct inputs. */
+    private static final int    STUCK_TICKS      = 40;
+    /** Minimum distance reduction per tick to not count as stuck (blocks). */
+    private static final float  STUCK_MIN_CLOSE  = 0.2f;
 
     private final Baritone       baritone;
     private final IPlayerContext ctx;
@@ -53,11 +59,17 @@ public final class CombatEngine {
     private final ShieldController  shieldController;
     private final PearlController   pearlController;
 
+    // Stuck-detection: cancel stale GoalNear paths that aren't closing the gap
+    private float lastKnownDist      = -1;
+    private int   closingStuckTicks  = 0;
+    // Range-transition: reset attack state when first entering melee range
+    private boolean wasInDirectControl = false;
+
     public CombatEngine(Baritone baritone, AwarenessContext awarenessCtx) {
         this.baritone      = baritone;
         this.ctx           = baritone.getPlayerContext();
         this.awarenessCtx  = awarenessCtx;
-        targetSelector    = new TargetSelector();
+        targetSelector    = new TargetSelector(ctx);
         spacingController = new SpacingController();
         attackValidator   = new AttackValidator(ctx, spacingController);
         creepeTactics     = new CreepeTactics(ctx);
@@ -112,11 +124,36 @@ public final class CombatEngine {
             return pause();
         }
 
-        if (distance > ENGAGE_DISTANCE) {
+        boolean inDirectControl = distance <= ENGAGE_DISTANCE;
+
+        if (!inDirectControl) {
+            // Stuck detection: if the path isn't closing the gap, cancel it so Baritone
+            // replans or we fall through to direct-input mode next tick.
+            if (lastKnownDist > 0 && distance > lastKnownDist - STUCK_MIN_CLOSE) {
+                closingStuckTicks++;
+                if (closingStuckTicks > STUCK_TICKS) {
+                    baritone.getPathingBehavior().secretInternalSegmentCancel();
+                    closingStuckTicks = 0;
+                }
+            } else {
+                closingStuckTicks = 0;
+            }
+            lastKnownDist      = distance;
+            wasInDirectControl = false;
+
             return new PathingCommand(
                 new GoalNear(target.tracked.entity.blockPosition(), 3),
                 PathingCommandType.REVALIDATE_GOAL_AND_PATH);
         }
+
+        // Entering direct-input range for the first time — reset stale jump state
+        // so the attack validator doesn't fire a leftover jump immediately.
+        if (!wasInDirectControl) {
+            attackValidator.reset();
+            lastKnownDist     = -1;
+            closingStuckTicks = 0;
+        }
+        wasInDirectControl = true;
 
         // 7. Direct input control at close range
         aimAt(target.tracked.entity);
@@ -124,6 +161,7 @@ public final class CombatEngine {
         int desiredSlot = weaponSelector.select(player, awarenessCtx);
         player.getInventory().selected = desiredSlot;
 
+        shieldController.tickDefense(target, input);
         attackValidator.tick(input, target);
         spacingController.tick(input, target, awarenessCtx);
 

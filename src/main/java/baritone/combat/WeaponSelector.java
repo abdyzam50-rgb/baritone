@@ -4,6 +4,9 @@ import baritone.awareness.AwarenessContext;
 import baritone.awareness.model.ThreatEntry;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
 
 /**
  * Decides which hotbar slot to occupy each combat tick.
@@ -62,13 +65,44 @@ public final class WeaponSelector {
             if (axeSlot >= 0) return axeSlot;
         }
 
-        // Default: best sword
-        int swordSlot = InventoryLayout.findSwordSlot(player);
-        return swordSlot >= 0 ? swordSlot : player.getInventory().selected;
+        // DPS-based selection: pick the weapon with best damage-per-second.
+        // Swords win DPS in equal-tier matchups, but a netherite axe beats a wooden sword.
+        int bestSlot = -1;
+        double bestDps = 0;
+        for (int i = 0; i < 9; i++) {
+            double dps = weaponDps(player.getInventory().getItem(i));
+            if (dps > bestDps) { bestDps = dps; bestSlot = i; }
+        }
+        if (bestSlot >= 0) return bestSlot;
+
+        return player.getInventory().selected;
     }
 
     /** True during the ~5-second window after we break an enemy's shield. */
     public boolean isInExploitWindow() {
         return exploitTimer > 0;
+    }
+
+    /**
+     * Estimates damage-per-second for a weapon stack using known base stats.
+     * DPS = (base item damage + 1 player base) × (attack speed in attacks/second).
+     * Returns 0 for non-weapons.
+     */
+    private static double weaponDps(ItemStack s) {
+        if (s.isEmpty()) return 0;
+        Item it = s.getItem();
+        // Swords — all attack speed 1.6/s
+        if (it == Items.NETHERITE_SWORD) return 9.0 * 1.6;
+        if (it == Items.DIAMOND_SWORD)   return 8.0 * 1.6;
+        if (it == Items.IRON_SWORD)      return 7.0 * 1.6;
+        if (it == Items.STONE_SWORD)     return 6.0 * 1.6;
+        if (it == Items.GOLDEN_SWORD || it == Items.WOODEN_SWORD) return 5.0 * 1.6;
+        // Axes — higher burst, lower speed
+        if (it == Items.NETHERITE_AXE)   return 11.0 * 1.0;
+        if (it == Items.DIAMOND_AXE)     return 10.0 * 1.0;
+        if (it == Items.IRON_AXE)        return 10.0 * 0.9;
+        if (it == Items.STONE_AXE)       return 10.0 * 0.8;
+        if (it == Items.GOLDEN_AXE || it == Items.WOODEN_AXE) return 8.0 * 0.8;
+        return 0;
     }
 }

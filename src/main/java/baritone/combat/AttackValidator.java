@@ -73,6 +73,9 @@ public final class AttackValidator {
         boolean shouldHit = falling || (jumpedForCrit && jumpTimer > MAX_JUMP_WAIT);
 
         if (shouldHit && target.tracked.hasLineOfSight) {
+            // Drop shield the same tick we swing — holding it absorbs the knockback
+            // that opens spacing and briefly delays the next cooldown cycle.
+            input.setInputForceState(Input.CLICK_RIGHT, false);
             spacing.scheduleWTap();
             Minecraft mc = ctx.minecraft();
             if (mc.gameMode != null) {
@@ -81,5 +84,11 @@ public final class AttackValidator {
             jumpedForCrit = false;
             jumpTimer     = 0;
         }
+    }
+
+    /** Reset jump-for-crit state, e.g. when first entering melee range. */
+    public void reset() {
+        jumpedForCrit = false;
+        jumpTimer     = 0;
     }
 }
