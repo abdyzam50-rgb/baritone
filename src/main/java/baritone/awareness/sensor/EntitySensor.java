@@ -4,6 +4,7 @@ import baritone.api.utils.IPlayerContext;
 import baritone.awareness.model.EntityCategory;
 import baritone.awareness.model.TrackedEntity;
 import baritone.awareness.model.TrackedEntity.EntityState;
+import baritone.combat.MobClassifier;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
@@ -131,14 +132,20 @@ public final class EntitySensor {
     }
 
     private EntityCategory classify(Entity entity) {
-        if (entity instanceof Player)          return EntityCategory.ENEMY_PLAYER;
-        if (entity instanceof Projectile)      return EntityCategory.PROJECTILE;
-        if (entity instanceof PrimedTnt)       return EntityCategory.EXPLOSIVE;
+        if (entity instanceof Player)     return EntityCategory.ENEMY_PLAYER;
+        if (entity instanceof Projectile) return EntityCategory.PROJECTILE;
+        if (entity instanceof PrimedTnt)  return EntityCategory.EXPLOSIVE;
         if (entity.getType() == EntityType.END_CRYSTAL) return EntityCategory.EXPLOSIVE;
-        if (entity instanceof Monster)         return EntityCategory.HOSTILE_MOB;
-        if (entity instanceof Animal)          return EntityCategory.PASSIVE_MOB;
+        if (entity instanceof Monster) {
+            // Per-mob rules: neutral mobs that haven't been provoked are treated as
+            // passive so ThreatScorer ignores them and the bot doesn't attack them.
+            return MobClassifier.isHostileToPlayer(entity, ctx.player())
+                ? EntityCategory.HOSTILE_MOB
+                : EntityCategory.PASSIVE_MOB;
+        }
+        if (entity instanceof Animal) return EntityCategory.PASSIVE_MOB;
         if (entity instanceof AbstractMinecart
-            || entity instanceof Boat)         return EntityCategory.VEHICLE;
+            || entity instanceof Boat)    return EntityCategory.VEHICLE;
         return EntityCategory.OTHER;
     }
 

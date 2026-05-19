@@ -2,6 +2,7 @@ package baritone.combat;
 
 import baritone.Baritone;
 import baritone.api.pathing.goals.GoalNear;
+import baritone.api.pathing.goals.GoalRunAway;
 import baritone.api.process.PathingCommand;
 import baritone.api.process.PathingCommandType;
 import baritone.api.utils.IPlayerContext;
@@ -24,7 +25,9 @@ import net.minecraft.world.phys.Vec3;
  *   3. PearlController — escape throw when surrounded or shield broken + low HP.
  *   4. HealthGate — disengage and heal when HP < 50%.
  *   5. CreepeTactics — fusing creeper override (sprints away immediately).
- *   6. TargetSelector — pick best living non-creeper target.
+ *   6. TargetSelector — pick best living target.
+ *   6a. Universally dangerous target (Warden, Wither, etc.) → GoalRunAway(20).
+ *   6b. Creeper target → pause; CreepeTactics handles the fuse.
  *   7a. Target > 4.5 m → Baritone GoalNear(3) to close gap.
  *   7b. Target ≤ 4.5 m → direct input control:
  *       WeaponSelector sets hotbar slot (sword or axe).
@@ -34,7 +37,8 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class CombatEngine {
 
-    private static final float ENGAGE_DISTANCE = 4.5f;
+    private static final float  ENGAGE_DISTANCE  = 4.5f;
+    private static final double FLEE_DISTANCE    = 20.0;
 
     private final Baritone       baritone;
     private final IPlayerContext ctx;
@@ -85,19 +89,25 @@ public final class CombatEngine {
             return healthGate.tick(input, awarenessCtx);
         }
 
-        // 4. Creeper override — sprints away immediately when any creeper is fusing.
-        //    Returns non-null to take full control of this tick.
+        // 4. Creeper override — sprints away immediately when any creeper is fusing
         PathingCommand creeperCmd = creepeTactics.tick(input, awarenessCtx);
         if (creeperCmd != null) return creeperCmd;
 
-        // 5. Target selection (creepers are lowest priority and only selected solo)
+        // 5. Target selection
         ThreatEntry target = targetSelector.select(awarenessCtx);
         if (target == null || !target.tracked.entity.isAlive()) return pause();
 
         float distance = (float) target.tracked.distance;
 
-        // Creepers: do not approach. CreepeTactics will handle the fuse when it starts;
-        // the creeper will chase the player naturally until then.
+        // 6a. Universally dangerous mobs: never engage, use Baritone to flee
+        if (MobClassifier.isUniversallyDangerous(target.tracked.entity)) {
+            return new PathingCommand(
+                new GoalRunAway(target.tracked.entity.blockPosition(), FLEE_DISTANCE),
+                PathingCommandType.REVALIDATE_GOAL_AND_PATH);
+        }
+
+        // 6b. Creepers: do not approach. CreepeTactics handles the fuse when it starts;
+        //     the creeper will chase the player naturally until then.
         if (target.tracked.entity instanceof Creeper) {
             return pause();
         }
@@ -108,7 +118,7 @@ public final class CombatEngine {
                 PathingCommandType.REVALIDATE_GOAL_AND_PATH);
         }
 
-        // 6. Direct input control at close range
+        // 7. Direct input control at close range
         aimAt(target.tracked.entity);
 
         int desiredSlot = weaponSelector.select(player, awarenessCtx);
