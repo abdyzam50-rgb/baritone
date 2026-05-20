@@ -5,21 +5,25 @@ import baritone.api.utils.input.Input;
 import baritone.awareness.model.ThreatEntry;
 import baritone.utils.InputOverrideHandler;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * Fires entity attacks when the correct conditions are met.
  *
- * Strategy — crit every hit:
+ * Primary strategy — jump-crit every hit:
  *   When grounded and cooldown is nearly ready, jump. Wait for the DOWNWARD arc
- *   (delta.y < 0, i.e. falling) before attacking. This lands a 1.5× damage critical
- *   hit every swing. If the jump somehow gets stuck (ceiling, lag) a fallback fires
- *   after MAX_JUMP_WAIT ticks.
+ *   (delta.y < 0) before attacking for a 1.5× damage critical hit.
+ *   Safety timer fires the attack after MAX_JUMP_WAIT ticks if the arc never comes.
  *
- *   Uses Minecraft.gameMode.attack() directly rather than the CLICK_LEFT input so
- *   the attack targets the correct entity rather than whatever the crosshair hitResult
- *   happens to contain this frame.
+ * Ceiling fallback — S-tap:
+ *   When a solid block within jump-clearance height is detected above the player,
+ *   jumping would be blocked (or produce no crit arc). Instead:
+ *     Tick 0 — press S for one tick to break sprint momentum (scheduleSTap).
+ *     Tick 1 — cooldown still high enough → fire attack + W-tap as normal.
+ *   This avoids the wasted jump and still maximises knockback by clearing sprint.
  */
 public final class AttackValidator {
 
@@ -33,6 +37,7 @@ public final class AttackValidator {
 
     private boolean jumpedForCrit = false;
     private int     jumpTimer     = 0;
+    private boolean sTapPending   = false;  // attack on next tick after S-tap
 
     public AttackValidator(IPlayerContext ctx, SpacingController spacing) {
         this.ctx     = ctx;
@@ -46,11 +51,10 @@ public final class AttackValidator {
         float cooldown = player.getAttackStrengthScale(0f);
         float distance = (float) target.tracked.distance;
 
-        // Reset stale jump state only when the target leaves melee range.
-        // LOS loss alone does not reset — a brief occlusion should not waste the jump.
         if (distance > MAX_RANGE) {
             jumpedForCrit = false;
             jumpTimer     = 0;
+            sTapPending   = false;
             return;
         }
         if (cooldown < MIN_COOLDOWN) return;
@@ -60,21 +64,39 @@ public final class AttackValidator {
         boolean falling  = !onGround && !player.onClimbable()
                         && !player.isInWater() && delta.y < 0;
 
-        // Initiate a crit jump when grounded and cooldown is nearly ready
+        // ── S-tap pending: the S-tap landed last tick; attack now ──────────────────
+        if (sTapPending) {
+            if (onGround && target.tracked.hasLineOfSight) {
+                input.setInputForceState(Input.CLICK_RIGHT, false);
+                spacing.scheduleWTap();
+                Minecraft mc = ctx.minecraft();
+                if (mc.gameMode != null) {
+                    mc.gameMode.attack(ctx.player(), target.tracked.entity);
+                }
+            }
+            sTapPending = false;
+            return;
+        }
+
+        // ── Ceiling check — prefer S-tap when jump would be blocked ──────────────
         if (!jumpedForCrit && onGround && cooldown >= JUMP_COOLDOWN) {
+            if (hasCeilingAbove(player)) {
+                // Can't jump-crit: S-tap this tick, attack next tick
+                spacing.scheduleSTap();
+                sTapPending = true;
+                return;
+            }
+            // Clear ceiling — initiate the normal jump-crit
             input.setInputForceState(Input.JUMP, true);
             jumpedForCrit = true;
             jumpTimer     = 0;
         }
         if (jumpedForCrit) jumpTimer++;
 
-        // Attack only on the falling arc (true 1.5× crit) or when the safety timer expires.
-        // No ground-attack fallback — that was causing non-crit hits at full cooldown.
+        // ── Attack on falling arc or safety timer ─────────────────────────────
         boolean shouldHit = falling || (jumpedForCrit && jumpTimer > MAX_JUMP_WAIT);
 
         if (shouldHit && target.tracked.hasLineOfSight) {
-            // Drop shield the same tick we swing — holding it absorbs the knockback
-            // that opens spacing and briefly delays the next cooldown cycle.
             input.setInputForceState(Input.CLICK_RIGHT, false);
             spacing.scheduleWTap();
             Minecraft mc = ctx.minecraft();
@@ -86,9 +108,25 @@ public final class AttackValidator {
         }
     }
 
-    /** Reset jump-for-crit state, e.g. when first entering melee range. */
     public void reset() {
         jumpedForCrit = false;
         jumpTimer     = 0;
+        sTapPending   = false;
+    }
+
+    // ── helpers ──────────────────────────────────────────────────────────────────
+
+    /**
+     * Returns true if a solid block is close enough above the player to prevent a
+     * jump-crit arc. A standard jump clears ~1.25 blocks; the player is 1.8 m tall,
+     * so check the block 2 above feet (≈ head height mid-jump).
+     */
+    private boolean hasCeilingAbove(Player player) {
+        Level world = ctx.world();
+        if (world == null) return false;
+        BlockPos feet  = player.blockPosition();
+        BlockPos check = feet.above(2);
+        return !world.getBlockState(check).isAir()
+            || !world.getBlockState(check.above()).isAir();
     }
 }
