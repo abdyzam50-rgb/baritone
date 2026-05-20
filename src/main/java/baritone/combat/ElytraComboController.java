@@ -6,18 +6,19 @@ import baritone.api.utils.IPlayerContext;
 import baritone.api.utils.input.Input;
 import baritone.awareness.model.ThreatEntry;
 import baritone.utils.InputOverrideHandler;
+import net.minecraft.core.Holder;
+import net.minecraft.core.component.DataComponents;
 import net.minecraft.world.entity.EquipmentSlot;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.item.enchantment.Enchantment;
+import net.minecraft.world.item.enchantment.ItemEnchantments;
 import net.minecraft.world.phys.Vec3;
 
 /**
  * Elytra + mace dive-bomb combos and wind-charge utility.
- *
- * All 1.21+ item references (Mace, Wind Charge) are resolved via reflection so
- * this class compiles and runs on 1.19.4 — features stay inactive when absent.
  *
  * Dive-bomb sequence (elytra equipped + mace in hotbar):
  *   LAUNCHING     — throw Wind Charge at own feet to rocket upward (if available).
@@ -37,16 +38,8 @@ import net.minecraft.world.phys.Vec3;
  */
 public final class ElytraComboController {
 
-    // ── 1.21+ items via reflection (null on earlier versions) ────────────────────────
-    static final Item MACE_ITEM;
-    static final Item WIND_CHARGE_ITEM;
-    static {
-        Item mace = null, wc = null;
-        try { mace = (Item) Items.class.getField("MACE").get(null);         } catch (Exception ignored) {}
-        try { wc   = (Item) Items.class.getField("WIND_CHARGE").get(null);  } catch (Exception ignored) {}
-        MACE_ITEM        = mace;
-        WIND_CHARGE_ITEM = wc;
-    }
+    static final Item MACE_ITEM        = Items.MACE;
+    static final Item WIND_CHARGE_ITEM = Items.WIND_CHARGE;
 
     private enum Phase { IDLE, LAUNCHING, ELYTRA_ACTIVE, DIVE_ATTACK, RECOVERING }
 
@@ -146,13 +139,11 @@ public final class ElytraComboController {
         }
 
         // ── IDLE: decide whether and how to initiate ──────────────────────────────────
-        if (MACE_ITEM == null) return null;  // no mace available on this MC version
-
         float dist = (float) target.tracked.distance;
 
         // Wind-charge enemy knock-up: throw at enemy to disrupt + launch them.
         // If elytra is equipped, immediately enter dive sequence for a smash follow-up.
-        if (dist <= KNOCKUP_RANGE && WIND_CHARGE_ITEM != null && wcCooldown == 0
+        if (dist <= KNOCKUP_RANGE && wcCooldown == 0
                 && target.tracked.hasLineOfSight) {
             int wcSlot   = findWindChargeSlot(player);
             int maceSlot = findMaceSlot(player);
@@ -173,7 +164,7 @@ public final class ElytraComboController {
         // Dive-bomb: elytra equipped, mace in hotbar, target far enough to gain altitude
         if (hasElytraEquipped(player) && findMaceSlot(player) >= 0 && dist > DIVE_MIN_DIST) {
             boosted = false;
-            boolean hasWC = WIND_CHARGE_ITEM != null && findWindChargeSlot(player) >= 0;
+            boolean hasWC = findWindChargeSlot(player) >= 0;
             phase = hasWC ? Phase.LAUNCHING : Phase.ELYTRA_ACTIVE;
             return tick(input, target);  // re-enter to execute the new phase immediately
         }
@@ -209,12 +200,8 @@ public final class ElytraComboController {
      *
      * @param preferDensity true  = prefer Density (fall-damage bonus, best for aerial dive).
      *                      false = prefer Breach  (armour ignore, best for grounded stun slam).
-     *
-     * Enchant detection uses NBT string matching so it compiles on 1.19.4 and still
-     * works on 1.21 as long as item tags are present (gracefully falls back to any mace).
      */
     public static int findMaceSlot(Player player, boolean preferDensity) {
-        if (MACE_ITEM == null) return -1;
         String want     = preferDensity ? "density" : "breach";
         String fallback = preferDensity ? "breach"  : "density";
         int wantSlot = -1, fallbackSlot = -1, anyMace = -1;
@@ -236,19 +223,20 @@ public final class ElytraComboController {
     }
 
     /**
-     * Checks for a named enchantment via item NBT tag string.
-     * Works on 1.19.4 (legacy enchantment tag) and degrades gracefully on 1.21+.
+     * Checks for a named enchantment via the ItemEnchantments data component.
+     * Matches by the path segment of the enchantment's registry key (e.g. "density").
      */
     private static boolean hasEnchantByName(ItemStack stack, String name) {
-        try {
-            net.minecraft.nbt.CompoundTag tag = stack.getTag();
-            if (tag != null) return tag.toString().contains(name);
-        } catch (Exception ignored) {}
+        ItemEnchantments enchants = stack.getOrDefault(DataComponents.ENCHANTMENTS, ItemEnchantments.EMPTY);
+        for (Holder<Enchantment> enchant : enchants.keySet()) {
+            if (enchant.unwrapKey().map(k -> k.location().getPath().equals(name)).orElse(false)) {
+                return true;
+            }
+        }
         return false;
     }
 
     public static int findWindChargeSlot(Player player) {
-        if (WIND_CHARGE_ITEM == null) return -1;
         for (int i = 0; i < 9; i++) {
             if (player.getInventory().getItem(i).getItem() == WIND_CHARGE_ITEM) return i;
         }

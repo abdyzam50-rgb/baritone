@@ -22,7 +22,7 @@ import net.minecraft.world.item.ItemStack;
  *   • Target is actively blocking (LivingEntity.isBlocking()).
  *   • Attack-strength cooldown ≥ 0.9 — ensures the axe hit actually stuns.
  *   • Axe available in hotbar.
- *   • Mace available in hotbar (1.21+ only; no-op on 1.19.4 when MACE_ITEM is null).
+ *   • Mace available in hotbar.
  *   • Line of sight to target.
  *
  * Enchant preference for the mace:
@@ -75,7 +75,7 @@ public final class StunSlamController {
         int maceSlot = ElytraComboController.findMaceSlot(player, false);
         if (maceSlot < 0) return false;
 
-        ItemStack held = player.getMainHandStack();
+        ItemStack held = player.getItemInHand(InteractionHand.MAIN_HAND);
         if (!InventoryLayout.isAxe(held)) {
             int axeSlot = InventoryLayout.findAxeSlot(player);
             if (axeSlot < 0) return false;
